@@ -11,8 +11,8 @@ var _ = require("lodash")
   , components = require("./componentDeclarations/components")
   , Client = require("./Client");
 
-var cassandra = null
-  , duckType = "[Object CassanKnex]";
+
+var duckType = "[Object CassanKnex]";
 
 /**
  * Constructor object, creates and returns a new cassanknex client
@@ -31,6 +31,7 @@ function CassanKnex() {
  * @returns {cassanKnex}
  */
 CassanKnex.initialize = function (config) {
+  var cassandra = null
 
   var EventEmitter = require('events').EventEmitter;
 
@@ -122,219 +123,219 @@ CassanKnex.initialize = function (config) {
     }
   }
 
+  //Check if the cql is a DDL Statement
+  //Return false if it is a DML Statement
+  function _isDDL(qb) {
+    // _component for DML is "query", other _component values (for DDL) are "columnFamily" and "keyspace"
+    return (qb._component !== components.query);
+  }
+  /**
+   * hooks the 'exec' cassandra client method to our query builder object
+   * @param qb
+   * @private
+   */
+  function _attachExecMethod(qb) {
+    /**
+     * Create the exec function for a pass through to the datastax driver.
+     *
+     * @param `{Object} options` optional argument passed to datastax driver upon query execution
+     * @param `{Function} cb` => function(err, result) {}
+     * @returns {Client|exports|module.exports}
+     */
+    qb.exec = function (options, cb) {
+
+      var _options = typeof options !== "undefined" && _.isFunction(options) ? {} : options
+        , _cb;
+
+      if (!_.has(_options, "prepare")) {
+        _options.prepare = qb._execPrepare;
+      }
+
+      if (_.isFunction(options)) {
+        _cb = options;
+      }
+      else if (_.isFunction(cb)) {
+        _cb = cb;
+      }
+      else {
+        _cb = _.noop;
+      }
+
+      if (cassandra !== null && cassandra.connected) {
+        var cql = qb.cql();
+        //Aws Keyspaces does not support prepared statements for DDL but does for DML
+        //So if the cql is DDL we don't send { prepare: true } options
+        //https://docs.aws.amazon.com/keyspaces/latest/devguide/functional-differences.html#functional-differences.prepared-statements
+        //This is required to be set to false and not removed as it will use the default in queryOptions
+        if(qb.awsKeyspace() && _isDDL(qb) && _options.prepare) {
+          _options.prepare=false;
+        }
+
+        cassandra.execute(cql, qb.bindings(), _options, _cb);
+      }
+      else {
+        _cb(new Error("Cassandra client is not initialized."));
+      }
+
+      // maintain chain
+      return qb;
+    };
+  }
+
+  /**
+   * hooks the 'stream' cassandra client method to our query builder object
+   * @param qb
+   * @private
+   */
+  function _attachStreamMethod(qb) {
+    /**
+     * Create the stream function for a pass through to the datastax driver,
+     * all callbacks are defaulted to lodash#noop if not declared.
+     *
+     * @param `{Object} options` optional argument passed to datastax driver upon query execution
+     * @param `{Object} cbs` =>
+     * {
+       *  readable: function() {},
+       *  end: function() {},
+       *  error: function(err) {}
+       * }
+     * @returns {Client|exports|module.exports}
+     */
+    qb.stream = function (options, cbs) {
+
+      var _options = _.isObject(cbs) ? options : {}
+        , _cbs = _.isObject(cbs) ? cbs : options
+        , onReadable = _cbs.readable || _.noop
+        , onEnd = _cbs.end || _.noop
+        , onError = _cbs.error || _.noop;
+
+      if (cassandra !== null && cassandra.connected) {
+        var cql = qb.cql();
+        cassandra.stream(cql, qb.bindings(), _options)
+          .on("readable", onReadable)
+          .on("end", onEnd)
+          .on("error", onError);
+      }
+      else {
+        console.error("Cassandra client is not initialized.");
+        onError(new Error("Cassandra client is not initialized."));
+      }
+
+      // maintain chain
+      return qb;
+    };
+  }
+
+  /**
+   * hooks the 'eachRow' cassandra client method to our query builder object
+   * @param qb
+   * @private
+   */
+  function _attachEachRowMethod(qb) {
+    /**
+     * Create the eachRow function for a pass through to the datastax driver.
+     *
+     * @param `{Object} options` optional argument passed to datastax driver upon query execution
+     * @param `{Function} rowCb` => function(row) {}
+     * @param `{Function} errorCb` => function(err) {}
+     * @returns {Client|exports|module.exports}
+     */
+    qb.eachRow = function (options, rowCb, errorCb) {
+
+      // options is really rowCB
+      if (_.isFunction(options)) {
+        errorCb = rowCb;
+        rowCb = options;
+      }
+
+      var _options = _.isObject(options) ? options : {};
+
+      if (!_.isFunction(rowCb)) {
+        rowCb = _.noop;
+      }
+      if (!_.isFunction(errorCb)) {
+        errorCb = _.noop;
+      }
+
+      if (cassandra !== null && cassandra.connected) {
+        var cql = qb.cql();
+        cassandra.eachRow(cql, qb.bindings(), _options, rowCb, errorCb);
+      }
+      else {
+        errorCb(new Error("Cassandra client is not initialized."));
+      }
+
+      // maintain chain
+      return qb;
+    };
+  }
+
+  /**
+   * hooks the 'batch' cassandra client method to our query builder object
+   * @param qb
+   * @private
+   */
+  function _attachBatchMethod(qb) {
+    /**
+     *
+     * @param options
+     * @param cassakni
+     * @param cb
+     * @returns {Client|exports|module.exports}
+     */
+    qb.batch = function (options, cassakni, cb) {
+
+      var _options
+        , _cassakni
+        , _cb;
+
+      // options is really cassakni, cassakni is cb
+      if (_.isArray(options)) {
+        _options = {};
+        _cassakni = options;
+        _cb = cassakni;
+      }
+      // standard order
+      else {
+        _options = options;
+        _cassakni = cassakni;
+        _cb = cb;
+      }
+
+      if (!_.isFunction(_cb)) {
+        _cb = _.noop;
+      }
+
+      if (cassandra !== null && cassandra.connected) {
+
+        var error = null
+          , statements = _.map(_cassakni, function (qb) {
+
+            if (!qb.toString || qb.toString() !== duckType) {
+              error = new Error("Invalid input to CassanKnex#batch.");
+              return {};
+            }
+            else {
+              return {query: qb.cql(), params: qb.bindings()};
+            }
+          });
+
+        if (error) {
+          return _cb(error);
+        }
+
+        cassandra.batch(statements, _options, _cb);
+      }
+      else {
+        _cb(new Error("Cassandra client is not initialized."));
+      }
+
+      // maintain chain
+      return qb;
+    };
+  }
+
   return cassanKnex;
 };
-
-//Check if the cql is a DDL Statement
-//Return false if it is a DML Statement
-function _isDDL(qb) {
-  // _component for DML is "query", other _component values (for DDL) are "columnFamily" and "keyspace"
-  return (qb._component !== components.query);
-}
-/**
- * hooks the 'exec' cassandra client method to our query builder object
- * @param qb
- * @private
- */
-function _attachExecMethod(qb) {
-  /**
-   * Create the exec function for a pass through to the datastax driver.
-   *
-   * @param `{Object} options` optional argument passed to datastax driver upon query execution
-   * @param `{Function} cb` => function(err, result) {}
-   * @returns {Client|exports|module.exports}
-   */
-  qb.exec = function (options, cb) {
-
-    var _options = typeof options !== "undefined" && _.isFunction(options) ? {} : options
-      , _cb;
-
-    if (!_.has(_options, "prepare")) {
-      _options.prepare = qb._execPrepare;
-    }
-
-    if (_.isFunction(options)) {
-      _cb = options;
-    }
-    else if (_.isFunction(cb)) {
-      _cb = cb;
-    }
-    else {
-      _cb = _.noop;
-    }
-
-    if (cassandra !== null && cassandra.connected) {
-      var cql = qb.cql();
-      //Aws Keyspaces does not support prepared statements for DDL but does for DML
-      //So if the cql is DDL we don't send { prepare: true } options
-      //https://docs.aws.amazon.com/keyspaces/latest/devguide/functional-differences.html#functional-differences.prepared-statements
-      //This is required to be set to false and not removed as it will use the default in queryOptions
-      if(qb.awsKeyspace() && _isDDL(qb) && _options.prepare) {
-        _options.prepare=false;
-      }
-
-      cassandra.execute(cql, qb.bindings(), _options, _cb);
-    }
-    else {
-      _cb(new Error("Cassandra client is not initialized."));
-    }
-
-    // maintain chain
-    return qb;
-  };
-}
-
-/**
- * hooks the 'stream' cassandra client method to our query builder object
- * @param qb
- * @private
- */
-function _attachStreamMethod(qb) {
-  /**
-   * Create the stream function for a pass through to the datastax driver,
-   * all callbacks are defaulted to lodash#noop if not declared.
-   *
-   * @param `{Object} options` optional argument passed to datastax driver upon query execution
-   * @param `{Object} cbs` =>
-   * {
-     *  readable: function() {},
-     *  end: function() {},
-     *  error: function(err) {}
-     * }
-   * @returns {Client|exports|module.exports}
-   */
-  qb.stream = function (options, cbs) {
-
-    var _options = _.isObject(cbs) ? options : {}
-      , _cbs = _.isObject(cbs) ? cbs : options
-      , onReadable = _cbs.readable || _.noop
-      , onEnd = _cbs.end || _.noop
-      , onError = _cbs.error || _.noop;
-
-    if (cassandra !== null && cassandra.connected) {
-      var cql = qb.cql();
-      cassandra.stream(cql, qb.bindings(), _options)
-        .on("readable", onReadable)
-        .on("end", onEnd)
-        .on("error", onError);
-    }
-    else {
-      console.error("Cassandra client is not initialized.");
-      onError(new Error("Cassandra client is not initialized."));
-    }
-
-    // maintain chain
-    return qb;
-  };
-}
-
-/**
- * hooks the 'eachRow' cassandra client method to our query builder object
- * @param qb
- * @private
- */
-function _attachEachRowMethod(qb) {
-  /**
-   * Create the eachRow function for a pass through to the datastax driver.
-   *
-   * @param `{Object} options` optional argument passed to datastax driver upon query execution
-   * @param `{Function} rowCb` => function(row) {}
-   * @param `{Function} errorCb` => function(err) {}
-   * @returns {Client|exports|module.exports}
-   */
-  qb.eachRow = function (options, rowCb, errorCb) {
-
-    // options is really rowCB
-    if (_.isFunction(options)) {
-      errorCb = rowCb;
-      rowCb = options;
-    }
-
-    var _options = _.isObject(options) ? options : {};
-
-    if (!_.isFunction(rowCb)) {
-      rowCb = _.noop;
-    }
-    if (!_.isFunction(errorCb)) {
-      errorCb = _.noop;
-    }
-
-    if (cassandra !== null && cassandra.connected) {
-      var cql = qb.cql();
-      cassandra.eachRow(cql, qb.bindings(), _options, rowCb, errorCb);
-    }
-    else {
-      errorCb(new Error("Cassandra client is not initialized."));
-    }
-
-    // maintain chain
-    return qb;
-  };
-}
-
-/**
- * hooks the 'batch' cassandra client method to our query builder object
- * @param qb
- * @private
- */
-function _attachBatchMethod(qb) {
-  /**
-   *
-   * @param options
-   * @param cassakni
-   * @param cb
-   * @returns {Client|exports|module.exports}
-   */
-  qb.batch = function (options, cassakni, cb) {
-
-    var _options
-      , _cassakni
-      , _cb;
-
-    // options is really cassakni, cassakni is cb
-    if (_.isArray(options)) {
-      _options = {};
-      _cassakni = options;
-      _cb = cassakni;
-    }
-    // standard order
-    else {
-      _options = options;
-      _cassakni = cassakni;
-      _cb = cb;
-    }
-
-    if (!_.isFunction(_cb)) {
-      _cb = _.noop;
-    }
-
-    if (cassandra !== null && cassandra.connected) {
-
-      var error = null
-        , statements = _.map(_cassakni, function (qb) {
-
-          if (!qb.toString || qb.toString() !== duckType) {
-            error = new Error("Invalid input to CassanKnex#batch.");
-            return {};
-          }
-          else {
-            return {query: qb.cql(), params: qb.bindings()};
-          }
-        });
-
-      if (error) {
-        return _cb(error);
-      }
-
-      cassandra.batch(statements, _options, _cb);
-    }
-    else {
-      _cb(new Error("Cassandra client is not initialized."));
-    }
-
-    // maintain chain
-    return qb;
-  };
-}
 
 module.exports = CassanKnex;
